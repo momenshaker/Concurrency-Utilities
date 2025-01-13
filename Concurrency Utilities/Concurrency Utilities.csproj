@@ -3,7 +3,7 @@
 	<PropertyGroup>
 		<TargetFramework>net8.0</TargetFramework>
 		<PackageId>ConcurrencyUtilities</PackageId>
-		<Version>1.0.1</Version>
+		<Version>1.0.2</Version>
 		<Authors>Momen Shaker</Authors>
 		<Description>A library for simplifying concurrent and parallel processing in .NET.</Description>
 		<PackageTags>concurrency, parallel, threading, caching</PackageTags>
