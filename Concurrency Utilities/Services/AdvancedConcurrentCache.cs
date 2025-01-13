@@ -64,7 +64,7 @@ public class AdvancedConcurrentCache : IAdvancedConcurrentCache
         {
             var cacheItem = new CacheItem<object>(value, expiryTime, priority);
 
-            await Task.Run(async () =>
+            await Task.Run(() =>
             {
                 cache.AddOrUpdate(key, cacheItem, (k, v) =>
                 {
@@ -79,7 +79,7 @@ public class AdvancedConcurrentCache : IAdvancedConcurrentCache
 
                 if (cache.Count > _maxSize)
                 {
-                    await EvictItemsAsync();
+                    EvictItemsAsync().ConfigureAwait(false);
                 }
             });
         }
@@ -118,7 +118,7 @@ public class AdvancedConcurrentCache : IAdvancedConcurrentCache
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Error in TryGetValue: {ex.Message}");
+            Console.Error.WriteLine($"Error in TryGetValueAsync: {ex.Message}");
             value = null;
             return false;
         }

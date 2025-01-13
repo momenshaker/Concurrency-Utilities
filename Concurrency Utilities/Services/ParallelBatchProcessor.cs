@@ -1,4 +1,5 @@
 ﻿using Concurrency_Utilities.Interfaces;
+using System.Collections.Concurrent;
 using System.Threading.Tasks.Dataflow;
 
 public class ParallelBatchProcessor : IParallelBatchProcessor
@@ -19,22 +20,29 @@ public class ParallelBatchProcessor : IParallelBatchProcessor
         CancellationToken cancellationToken = default)
     {
         var semaphore = new SemaphoreSlim(maxDegreeOfParallelism);  // Semaphore to limit concurrency
-        var tasks = items.Select(async item =>
+        var tasks = new List<Task>();
+
+        foreach (var item in items)
         {
-            await semaphore.WaitAsync(cancellationToken);
-            try
+            var task = Task.Run(async () =>
             {
-                await processItem(item);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error processing item: {ex.Message}");
-            }
-            finally
-            {
-                semaphore.Release();
-            }
-        });
+                await semaphore.WaitAsync(cancellationToken);
+                try
+                {
+                    await processItem(item);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error processing item {item}: {ex.Message}");
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            }, cancellationToken);
+
+            tasks.Add(task);
+        }
 
         await Task.WhenAll(tasks);
     }
@@ -61,11 +69,21 @@ public class ParallelBatchProcessor : IParallelBatchProcessor
 
         var block = new ActionBlock<T>(item =>
         {
-            processItem(item);
+            try
+            {
+                processItem(item);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error processing item {item}: {ex.Message}");
+            }
         }, options);
 
         foreach (var item in items)
         {
+            if (cancellationToken.IsCancellationRequested)
+                break;
+
             block.Post(item);
         }
 
@@ -90,13 +108,28 @@ public class ParallelBatchProcessor : IParallelBatchProcessor
     {
         int totalItems = items.Count();
         int processedItems = 0;
+        var tasks = new List<Task>();
 
-        var tasks = items.Select(async item =>
+        foreach (var item in items)
         {
-            await processItem(item);
-            processedItems++;
-            onProgress?.Invoke((int)((double)processedItems / totalItems * 100));  // Report progress
-        });
+            var task = Task.Run(async () =>
+            {
+                try
+                {
+                    await processItem(item);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error processing item {item}: {ex.Message}");
+                }
+
+                processedItems++;
+                int progress = (int)((double)processedItems / totalItems * 100);
+                onProgress?.Invoke(progress);  // Report progress
+            }, cancellationToken);
+
+            tasks.Add(task);
+        }
 
         await Task.WhenAll(tasks);
     }
@@ -115,27 +148,47 @@ public class ParallelBatchProcessor : IParallelBatchProcessor
         int maxRetryAttempts = 3,
         CancellationToken cancellationToken = default)
     {
+        var failedItems = new ConcurrentQueue<T>();  // To collect items that failed after max retries
+
         foreach (var item in items)
         {
             int attempt = 0;
-            while (attempt < maxRetryAttempts)
+            bool processedSuccessfully = false;
+
+            while (attempt < maxRetryAttempts && !processedSuccessfully)
             {
                 try
                 {
                     await processItem(item);
-                    break;  // Break on success
+                    processedSuccessfully = true;
                 }
                 catch (Exception ex)
                 {
                     attempt++;
-                    Console.WriteLine($"Error processing item: {ex.Message}. Retrying... (Attempt {attempt}/{maxRetryAttempts})");
+                    Console.WriteLine($"Error processing item {item}: {ex.Message}. Retrying... (Attempt {attempt}/{maxRetryAttempts})");
 
                     if (attempt == maxRetryAttempts)
                     {
                         Console.WriteLine($"Max retry attempts reached for item: {item}. Skipping.");
+                        failedItems.Enqueue(item);  // Item failed after retries
                     }
-                    await Task.Delay(1000, cancellationToken);  // Optional delay between retries
+                    else
+                    {
+                        // Implement exponential backoff strategy for retries
+                        var backoffTime = TimeSpan.FromSeconds(Math.Pow(2, attempt));
+                        await Task.Delay(backoffTime, cancellationToken);  // Delay before retry
+                    }
                 }
+            }
+        }
+
+        // Handle failed items after all retries
+        if (failedItems.Any())
+        {
+            Console.WriteLine("Some items failed after retries:");
+            foreach (var failedItem in failedItems)
+            {
+                Console.WriteLine($"Failed Item: {failedItem}");
             }
         }
     }
